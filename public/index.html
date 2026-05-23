@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Builders Digest</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 760px; margin: 0 auto; padding: 24px; color: #1a1a1a; background: #fafafa; }
+  h1 { font-size: 22px; }
+  #go { font-size: 16px; padding: 12px 24px; border: none; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
+  #go:disabled { background: #9ca3af; cursor: not-allowed; }
+  #status { margin: 16px 0; color: #666; }
+  #result { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-top: 16px; line-height: 1.7; display: none; }
+  #result a { color: #2563eb; word-break: break-all; }
+  #copy { display: none; margin-top: 12px; padding: 8px 16px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; cursor: pointer; }
+  .err { color: #dc2626; }
+</style>
+</head>
+<body>
+  <h1>📡 AI Builders Digest</h1>
+  <p>点下面的按钮，生成今天的中文 AI 摘要（X 动态 / 官方博客 / 播客）。</p>
+  <button id="go">生成今日 AI 汇总</button>
+  <div id="status"></div>
+  <div id="result"></div>
+  <button id="copy">复制全文</button>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script>
+    const go = document.getElementById('go');
+    const statusEl = document.getElementById('status');
+    const result = document.getElementById('result');
+    const copy = document.getElementById('copy');
+    let raw = '';
+    go.addEventListener('click', async () => {
+      go.disabled = true; copy.style.display = 'none'; result.style.display = 'none';
+      statusEl.className = ''; statusEl.textContent = '正在生成…大约需要半分钟，请稍候。';
+      try {
+        const r = await fetch('/api/digest', { method: 'POST' });
+        const data = await r.json();
+        if (!r.ok) { throw new Error(data.error || '生成失败'); }
+        raw = data.digest;
+        result.innerHTML = marked.parse(raw);
+        result.style.display = 'block';
+        copy.style.display = 'inline-block';
+        statusEl.textContent = '生成时间：' + new Date(data.generatedAt).toLocaleString('zh-CN');
+      } catch (e) {
+        statusEl.className = 'err'; statusEl.textContent = '出错了：' + e.message;
+      } finally {
+        go.disabled = false;
+      }
+    });
+    copy.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(raw);
+      copy.textContent = '已复制 ✓';
+      setTimeout(() => (copy.textContent = '复制全文'), 1500);
+    });
+  </script>
+</body>
+</html>
