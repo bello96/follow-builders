@@ -6,53 +6,200 @@
 <title>AI Builders Digest</title>
 <style>
   body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 760px; margin: 0 auto; padding: 24px; color: #1a1a1a; background: #fafafa; }
-  h1 { font-size: 22px; }
-  #go { font-size: 16px; padding: 12px 24px; border: none; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
-  #go:disabled { background: #9ca3af; cursor: not-allowed; }
-  #status { margin: 16px 0; color: #666; }
-  #result { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-top: 16px; line-height: 1.7; display: none; }
-  #result a { color: #2563eb; word-break: break-all; }
-  #copy { display: none; margin-top: 12px; padding: 8px 16px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; cursor: pointer; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .sub { color: #666; margin-top: 0; }
+  section { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin: 16px 0; }
+  label { display: block; font-size: 14px; color: #374151; margin-bottom: 8px; font-weight: 600; }
+  .keyrow { display: flex; gap: 8px; }
+  #keyInput { flex: 1; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+  button { font-size: 15px; padding: 8px 18px; border: none; border-radius: 6px; background: #2563eb; color: #fff; cursor: pointer; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  #saveKey { background: #059669; }
+  #keyStatus { font-size: 13px; margin-top: 8px; }
+  .ok { color: #059669; }
+  .warn { color: #d97706; }
   .err { color: #dc2626; }
+  #go { font-size: 16px; padding: 12px 24px; width: 100%; }
+  #status { margin: 14px 0; color: #666; font-size: 14px; }
+  #result { line-height: 1.7; display: none; }
+  #result a { color: #2563eb; word-break: break-all; }
+  #copy { display: none; margin-top: 12px; background: #fff; color: #374151; border: 1px solid #d1d5db; }
+  details summary { cursor: pointer; font-weight: 600; color: #374151; }
+  .srcgroup { margin-top: 10px; }
+  .srcgroup h4 { margin: 10px 0 4px; font-size: 14px; }
+  .srcgroup a { display: inline-block; margin: 2px 8px 2px 0; font-size: 13px; color: #2563eb; text-decoration: none; }
+  .hint { font-size: 12px; color: #9ca3af; margin-top: 6px; line-height: 1.5; }
 </style>
 </head>
 <body>
   <h1>📡 AI Builders Digest</h1>
-  <p>点下面的按钮，生成今天的中文 AI 摘要（X 动态 / 官方博客 / 播客）。</p>
-  <button id="go">生成今日 AI 汇总</button>
-  <div id="status"></div>
-  <div id="result"></div>
-  <button id="copy">复制全文</button>
+  <p class="sub">追踪 AI 顶尖建造者，一键生成中文摘要（X 动态 / 官方博客 / 播客）。</p>
+
+  <section>
+    <label>🔑 你的 DeepSeek API Key</label>
+    <div class="keyrow">
+      <input id="keyInput" type="password" placeholder="sk-..." autocomplete="off" />
+      <button id="saveKey">保存</button>
+    </div>
+    <div id="keyStatus"></div>
+    <p class="hint">Key 只存在你这台浏览器里，生成时直接发给 DeepSeek，不经过本站服务器、也不上传任何地方。可在 platform.deepseek.com 获取。</p>
+  </section>
+
+  <section>
+    <button id="go">生成今日 AI 汇总</button>
+    <div id="status"></div>
+    <div id="result"></div>
+    <button id="copy">复制全文</button>
+  </section>
+
+  <section>
+    <details id="sources">
+      <summary>📋 在追踪的信息源（点击展开）</summary>
+      <div id="sourcesContent">加载中…</div>
+    </details>
+  </section>
+
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
-    const go = document.getElementById('go');
-    const statusEl = document.getElementById('status');
-    const result = document.getElementById('result');
-    const copy = document.getElementById('copy');
+    const BASE = 'https://raw.githubusercontent.com/zarazhangrui/follow-builders/main';
+    const PROMPT_FILES = { digest_intro: 'digest-intro.md', summarize_tweets: 'summarize-tweets.md', summarize_podcast: 'summarize-podcast.md', summarize_blogs: 'summarize-blogs.md', translate: 'translate.md' };
+    const KEY_STORE = 'fb_deepseek_key';
+    const $ = (id) => document.getElementById(id);
     let raw = '';
-    go.addEventListener('click', async () => {
-      go.disabled = true; copy.style.display = 'none'; result.style.display = 'none';
-      statusEl.className = ''; statusEl.textContent = '正在生成…大约需要半分钟，请稍候。';
-      try {
-        const r = await fetch('/api/digest', { method: 'POST' });
-        const data = await r.json();
-        if (!r.ok) { throw new Error(data.error || '生成失败'); }
-        raw = data.digest;
-        result.innerHTML = marked.parse(raw);
-        result.style.display = 'block';
-        copy.style.display = 'inline-block';
-        statusEl.textContent = '生成时间：' + new Date(data.generatedAt).toLocaleString('zh-CN');
-      } catch (e) {
-        statusEl.className = 'err'; statusEl.textContent = '出错了：' + e.message;
-      } finally {
-        go.disabled = false;
+
+    // ---- Key 配置 ----
+    function loadKey() {
+      const k = localStorage.getItem(KEY_STORE);
+      if (k) {
+        $('keyInput').value = k;
+        $('keyStatus').innerHTML = '<span class="ok">✓ 已配置（保存在本浏览器）</span>';
+      } else {
+        $('keyStatus').innerHTML = '<span class="warn">尚未配置，请先填入 key 再生成</span>';
       }
+    }
+    $('saveKey').addEventListener('click', () => {
+      const k = $('keyInput').value.trim();
+      if (!k) { $('keyStatus').innerHTML = '<span class="err">key 不能为空</span>'; return; }
+      localStorage.setItem(KEY_STORE, k);
+      $('keyStatus').innerHTML = '<span class="ok">✓ 已保存到本浏览器</span>';
     });
-    copy.addEventListener('click', async () => {
+
+    // ---- 信息源列表 ----
+    async function loadSources() {
+      try {
+        const s = await fetch(`${BASE}/config/default-sources.json`).then((r) => r.json());
+        let html = '';
+        html += '<div class="srcgroup"><h4>X / Twitter 建造者（' + (s.x_accounts || []).length + '）</h4>';
+        html += (s.x_accounts || []).map((a) => `<a href="https://x.com/${a.handle}" target="_blank" rel="noopener">${a.name}</a>`).join('');
+        html += '</div><div class="srcgroup"><h4>播客（' + (s.podcasts || []).length + '）</h4>';
+        html += (s.podcasts || []).map((p) => `<a href="${p.url}" target="_blank" rel="noopener">${p.name}</a>`).join('');
+        html += '</div><div class="srcgroup"><h4>官方博客（' + (s.blogs || []).length + '）</h4>';
+        html += (s.blogs || []).map((b) => `<a href="${b.indexUrl}" target="_blank" rel="noopener">${b.name}</a>`).join('');
+        html += '</div>';
+        $('sourcesContent').innerHTML = html;
+      } catch (e) {
+        $('sourcesContent').innerHTML = '<span class="err">源列表加载失败：' + e.message + '</span>';
+      }
+    }
+
+    // ---- 生成（前端直连 DeepSeek）----
+    function formatFeedContent(feeds) {
+      const parts = ['===TWEETS==='];
+      for (const b of feeds.x || []) {
+        parts.push(`\n## ${b.name || ''} (@${b.handle || ''})`);
+        if (b.bio) { parts.push(`BIO: ${b.bio}`); }
+        for (const t of b.tweets || []) {
+          parts.push(`- ${(t.text || '').replace(/\s+/g, ' ').trim()}`);
+          parts.push(`  URL: ${t.url || ''}`);
+        }
+      }
+      parts.push('\n\n===BLOGS===');
+      for (const b of feeds.blogs || []) {
+        parts.push(`\n## ${b.source || b.name || ''}: ${b.title || ''}`);
+        parts.push(`URL: ${b.url || ''}`);
+        parts.push(`BODY:\n${b.content || b.description || ''}`);
+      }
+      parts.push('\n\n===PODCAST===');
+      for (const p of feeds.podcasts || []) {
+        parts.push(`\n## ${p.name || ''}: ${p.title || ''}`);
+        parts.push(`URL: ${p.url || ''}`);
+        parts.push(`TRANSCRIPT:\n${p.transcript || ''}`);
+      }
+      return parts.join('\n');
+    }
+
+    function buildMessages(feeds, prompts, dateStr) {
+      const system = [
+        '你是 AI 行业资讯的中文编辑。严格依据提供的原始内容做混编摘要，不得编造，每条必须保留原始链接。',
+        '输出整份简体中文 digest。遵循以下规则：',
+        '\n## 整体格式\n' + prompts.digest_intro,
+        '\n## 推文摘要\n' + prompts.summarize_tweets,
+        '\n## 博客摘要\n' + prompts.summarize_blogs,
+        '\n## 播客混编\n' + prompts.summarize_podcast,
+        '\n## 中文风格\n' + prompts.translate,
+        `\n标题用："AI Builders Digest · ${dateStr}"。顺序：X / Twitter、官方博客、播客。结尾加一行："通过 Follow Builders 生成"。不要使用破折号。`,
+      ].join('\n');
+      const user = '以下是今天的原始 feed 内容，请据此生成中文 digest：\n\n' + formatFeedContent(feeds);
+      return [{ role: 'system', content: system }, { role: 'user', content: user }];
+    }
+
+    async function generate() {
+      const key = localStorage.getItem(KEY_STORE);
+      if (!key) {
+        $('status').className = 'err';
+        $('status').textContent = '请先在上方填入你的 DeepSeek API Key 并点「保存」。';
+        return;
+      }
+      $('go').disabled = true; $('copy').style.display = 'none'; $('result').style.display = 'none';
+      $('status').className = ''; $('status').textContent = '正在抓取最新内容…';
+      try {
+        const [fx, fp, fb] = await Promise.all([
+          fetch(`${BASE}/feed-x.json`).then((r) => r.json()),
+          fetch(`${BASE}/feed-podcasts.json`).then((r) => r.json()),
+          fetch(`${BASE}/feed-blogs.json`).then((r) => r.json()),
+        ]);
+        const promptEntries = await Promise.all(
+          Object.entries(PROMPT_FILES).map(async ([k, f]) => [k, await fetch(`${BASE}/prompts/${f}`).then((r) => r.text())]),
+        );
+        const prompts = Object.fromEntries(promptEntries);
+        const feeds = { x: fx.x || [], podcasts: fp.podcasts || [], blogs: fb.blogs || [] };
+        const dateStr = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
+        const messages = buildMessages(feeds, prompts, dateStr);
+
+        $('status').textContent = '正在请 DeepSeek 生成中文摘要…（约半分钟）';
+        const res = await fetch('https://api.deepseek.com/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+          body: JSON.stringify({ model: 'deepseek-chat', messages, temperature: 0.6, max_tokens: 8000, stream: false }),
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`DeepSeek 返回 ${res.status}：${errText.slice(0, 200)}`);
+        }
+        const data = await res.json();
+        raw = data.choices?.[0]?.message?.content || '';
+        if (!raw) { throw new Error('DeepSeek 返回了空内容'); }
+        $('result').innerHTML = marked.parse(raw);
+        $('result').style.display = 'block';
+        $('copy').style.display = 'inline-block';
+        $('status').textContent = '生成完成 · ' + new Date().toLocaleString('zh-CN');
+      } catch (e) {
+        $('status').className = 'err';
+        $('status').textContent = '出错了：' + e.message;
+      } finally {
+        $('go').disabled = false;
+      }
+    }
+
+    $('go').addEventListener('click', generate);
+    $('copy').addEventListener('click', async () => {
       await navigator.clipboard.writeText(raw);
-      copy.textContent = '已复制 ✓';
-      setTimeout(() => (copy.textContent = '复制全文'), 1500);
+      $('copy').textContent = '已复制 ✓';
+      setTimeout(() => ($('copy').textContent = '复制全文'), 1500);
     });
+
+    loadKey();
+    loadSources();
   </script>
 </body>
 </html>
