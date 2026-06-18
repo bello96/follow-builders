@@ -5,6 +5,15 @@ export interface Blog { source?: string; name?: string; title?: string; url?: st
 export interface Feeds { x: Builder[]; podcasts: Podcast[]; blogs: Blog[]; }
 export interface Prompts { digest_intro: string; summarize_tweets: string; summarize_podcast: string; summarize_blogs: string; translate: string; }
 export interface ChatMessage { role: 'system' | 'user'; content: string; }
+export interface SourceSelection { x: string[]; podcasts: string[]; blogs: string[]; }
+
+export function filterFeeds(feeds: Feeds, selection: SourceSelection): Feeds {
+  return {
+    x: (feeds.x ?? []).filter((b) => !!b.handle && selection.x.includes(b.handle)),
+    podcasts: (feeds.podcasts ?? []).filter((p) => !!p.name && selection.podcasts.includes(p.name)),
+    blogs: (feeds.blogs ?? []).filter((b) => !!b.name && selection.blogs.includes(b.name)),
+  };
+}
 
 export function formatFeedContent(feeds: Feeds): string {
   const parts: string[] = ['===TWEETS==='];

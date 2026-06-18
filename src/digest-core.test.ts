@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatFeedContent, buildMessages, type Feeds, type Prompts } from './digest-core';
+import { formatFeedContent, buildMessages, filterFeeds, type Feeds, type Prompts } from './digest-core';
 
 const feeds: Feeds = {
   x: [{ name: 'Aaron Levie', handle: 'levie', bio: 'ceo @box', tweets: [{ text: 'AI costs are stratifying', url: 'https://x.com/levie/status/1' }] }],
@@ -21,6 +21,69 @@ describe('formatFeedContent', () => {
     const out = formatFeedContent(feeds);
     expect(out).toContain('Auto mode');
     expect(out).toContain('transcript text');
+  });
+});
+
+describe('filterFeeds', () => {
+  const full: Feeds = {
+    x: [
+      { name: 'Aaron Levie', handle: 'levie', tweets: [{ text: 'a' }] },
+      { name: 'Andrej Karpathy', handle: 'karpathy', tweets: [{ text: 'b' }] },
+      { name: 'No Handle', tweets: [{ text: 'c' }] },
+    ],
+    podcasts: [
+      { name: 'Training Data', title: 't1' },
+      { name: 'MAD Podcast', title: 't2' },
+      { title: 'no name' },
+    ],
+    blogs: [
+      { source: 'blog', name: 'Claude Blog', title: 'b1' },
+      { source: 'blog', name: 'OpenAI Blog', title: 'b2' },
+      { source: 'blog', title: 'no name blog' },
+    ],
+  };
+
+  it('keeps only X builders whose handle is selected', () => {
+    const out = filterFeeds(full, { x: ['levie'], podcasts: [], blogs: [] });
+    expect(out.x.map((b) => b.handle)).toEqual(['levie']);
+  });
+
+  it('filters podcasts and blogs by name', () => {
+    const out = filterFeeds(full, { x: [], podcasts: ['MAD Podcast'], blogs: ['Claude Blog'] });
+    expect(out.podcasts.map((p) => p.name)).toEqual(['MAD Podcast']);
+    expect(out.blogs.map((b) => b.name)).toEqual(['Claude Blog']);
+  });
+
+  it('returns an empty array for a group whose selection is empty', () => {
+    const out = filterFeeds(full, { x: [], podcasts: [], blogs: [] });
+    expect(out.x).toEqual([]);
+    expect(out.podcasts).toEqual([]);
+    expect(out.blogs).toEqual([]);
+  });
+
+  it('ignores selected handles/names that do not exist (no throw, no false include)', () => {
+    const out = filterFeeds(full, { x: ['ghost'], podcasts: ['Nope'], blogs: ['Missing'] });
+    expect(out.x).toEqual([]);
+    expect(out.podcasts).toEqual([]);
+    expect(out.blogs).toEqual([]);
+  });
+
+  it('skips entries missing handle/name', () => {
+    const out = filterFeeds(full, {
+      x: ['levie', 'karpathy'],
+      podcasts: ['Training Data', 'MAD Podcast'],
+      blogs: ['Claude Blog', 'OpenAI Blog'],
+    });
+    expect(out.x.map((b) => b.handle)).toEqual(['levie', 'karpathy']);
+    expect(out.podcasts).toHaveLength(2);
+    expect(out.blogs).toHaveLength(2);
+  });
+
+  it('does not mutate the input feeds', () => {
+    filterFeeds(full, { x: ['levie'], podcasts: [], blogs: [] });
+    expect(full.x).toHaveLength(3);
+    expect(full.podcasts).toHaveLength(3);
+    expect(full.blogs).toHaveLength(3);
   });
 });
 

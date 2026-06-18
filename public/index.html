@@ -25,10 +25,16 @@
   #result a { color: #2563eb; word-break: break-all; }
   #copy { display: none; margin-top: 12px; background: #fff; color: #374151; border: 1px solid #d1d5db; }
   details summary { cursor: pointer; font-weight: 600; color: #374151; }
-  .srcgroup { margin-top: 10px; }
-  .srcgroup h4 { margin: 10px 0 4px; font-size: 14px; }
-  .srcgroup a { display: inline-block; margin: 2px 8px 2px 0; font-size: 13px; color: #2563eb; text-decoration: none; }
   .hint { font-size: 12px; color: #9ca3af; margin-top: 6px; line-height: 1.5; }
+  /* 信息源勾选清单 */
+  .srcgroup { margin-top: 14px; }
+  .srchead { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; margin-bottom: 0; }
+  .srchead input { width: auto; margin: 0; }
+  .srchead .grptitle { font-size: 14px; font-weight: 600; color: #374151; }
+  .srcitems { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 3px 14px; margin-top: 8px; }
+  .srcitem { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 400; color: #374151; margin: 0; }
+  .srcitem input { width: auto; margin: 0; }
+  .srcitem .handle { color: #9ca3af; }
 </style>
 </head>
 <body>
@@ -53,8 +59,8 @@
   </section>
 
   <section>
-    <details id="sources">
-      <summary>📋 在追踪的信息源（点击展开）</summary>
+    <details id="sources" open>
+      <summary>📋 信息源（勾选纳入摘要的来源）</summary>
       <div id="sourcesContent">加载中…</div>
     </details>
   </section>
@@ -64,8 +70,14 @@
     const BASE = 'https://raw.githubusercontent.com/zarazhangrui/follow-builders/main';
     const PROMPT_FILES = { digest_intro: 'digest-intro.md', summarize_tweets: 'summarize-tweets.md', summarize_podcast: 'summarize-podcast.md', summarize_blogs: 'summarize-blogs.md', translate: 'translate.md' };
     const KEY_STORE = 'fb_deepseek_key';
+    const SOURCES_STORE = 'fb_selected_sources';
+    // 生成参数固定为最优组合，不在页面暴露：最强模型 + 充足输出 + 稳健温度 + 较长超时。
+    const GEN = { model: 'deepseek-v4-pro', temperature: 0.6, maxTokens: 32768, timeoutSec: 120 };
     const $ = (id) => document.getElementById(id);
     let raw = '';
+    let sources = { x_accounts: [], podcasts: [], blogs: [] };
+
+    const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
     // ---- Key 配置 ----
     function loadKey() {
@@ -84,25 +96,88 @@
       $('keyStatus').innerHTML = '<span class="ok">✓ 已保存到本浏览器</span>';
     });
 
-    // ---- 信息源列表 ----
+    // ---- 信息源勾选 ----
+    function loadStoredSelection() {
+      try { return JSON.parse(localStorage.getItem(SOURCES_STORE)); }
+      catch { return null; }
+    }
+    // 勾选判定：首次访问（无记录）或该组从未保存过 → 默认勾选；否则按已保存的选中列表。
+    function isChecked(stored, group, id) {
+      if (!stored || !Array.isArray(stored[group])) { return true; }
+      return stored[group].includes(id);
+    }
+    // 以当前复选框状态为准，构造 { x, podcasts, blogs } 选中 id 列表。
+    function currentSelection() {
+      const sel = { x: [], podcasts: [], blogs: [] };
+      document.querySelectorAll('#sourcesContent input[type=checkbox][data-group]').forEach((cb) => {
+        if (cb.checked) { sel[cb.dataset.group].push(cb.dataset.id); }
+      });
+      return sel;
+    }
+    function saveSelection() {
+      localStorage.setItem(SOURCES_STORE, JSON.stringify(currentSelection()));
+    }
+    // 根据该组各项勾选情况，更新「全选」主复选框：全勾→选中，全不勾→未选，部分→半选。
+    function updateMaster(group) {
+      const master = document.querySelector(`#sourcesContent input[data-master="${group}"]`);
+      if (!master) { return; }
+      const items = [...document.querySelectorAll(`#sourcesContent input[type=checkbox][data-group="${group}"]`)];
+      const checkedCount = items.filter((c) => c.checked).length;
+      master.checked = items.length > 0 && checkedCount === items.length;
+      master.indeterminate = checkedCount > 0 && checkedCount < items.length;
+    }
+    function renderGroup(title, group, items, stored) {
+      const head = `<label class="srchead"><input type="checkbox" data-master="${group}"/>`
+        + ` <span class="grptitle">${escHtml(title)}（${items.length}）</span></label>`;
+      const body = items.map((it) => {
+        const checked = isChecked(stored, group, it.id) ? 'checked' : '';
+        const sub = it.sub ? ` <span class="handle">${escHtml(it.sub)}</span>` : '';
+        return `<label class="srcitem"><input type="checkbox" data-group="${group}" data-id="${escHtml(it.id)}" ${checked}/>`
+          + ` <span>${escHtml(it.label)}</span>${sub}</label>`;
+      }).join('');
+      return `<div class="srcgroup">${head}<div class="srcitems">${body}</div></div>`;
+    }
     async function loadSources() {
       try {
         const s = await fetch(`${BASE}/config/default-sources.json`).then((r) => r.json());
-        let html = '';
-        html += '<div class="srcgroup"><h4>X / Twitter 建造者（' + (s.x_accounts || []).length + '）</h4>';
-        html += (s.x_accounts || []).map((a) => `<a href="https://x.com/${a.handle}" target="_blank" rel="noopener">${a.name}</a>`).join('');
-        html += '</div><div class="srcgroup"><h4>播客（' + (s.podcasts || []).length + '）</h4>';
-        html += (s.podcasts || []).map((p) => `<a href="${p.url}" target="_blank" rel="noopener">${p.name}</a>`).join('');
-        html += '</div><div class="srcgroup"><h4>官方博客（' + (s.blogs || []).length + '）</h4>';
-        html += (s.blogs || []).map((b) => `<a href="${b.indexUrl}" target="_blank" rel="noopener">${b.name}</a>`).join('');
-        html += '</div>';
-        $('sourcesContent').innerHTML = html;
+        sources = { x_accounts: s.x_accounts || [], podcasts: s.podcasts || [], blogs: s.blogs || [] };
+        const stored = loadStoredSelection();
+        const xItems = sources.x_accounts.filter((a) => a.handle).map((a) => ({ id: a.handle, label: a.name || a.handle, sub: '@' + a.handle }));
+        const podItems = sources.podcasts.filter((p) => p.name).map((p) => ({ id: p.name, label: p.name }));
+        const blogItems = sources.blogs.filter((b) => b.name).map((b) => ({ id: b.name, label: b.name }));
+        $('sourcesContent').innerHTML =
+          renderGroup('X / Twitter 建造者', 'x', xItems, stored)
+          + renderGroup('播客', 'podcasts', podItems, stored)
+          + renderGroup('官方博客', 'blogs', blogItems, stored);
+        ['x', 'podcasts', 'blogs'].forEach(updateMaster);
+        // 把首次访问的「默认全选」落为具体记录，便于后续按记录判定。
+        saveSelection();
       } catch (e) {
-        $('sourcesContent').innerHTML = '<span class="err">源列表加载失败：' + e.message + '</span>';
+        $('sourcesContent').innerHTML = '<span class="err">源列表加载失败：' + escHtml(e.message) + '</span>';
       }
     }
+    // 事件委托：主复选框切换全组；单项变化则回写主复选框状态；任何变化都即时保存。
+    $('sourcesContent').addEventListener('change', (e) => {
+      const t = e.target;
+      if (t.matches('input[type=checkbox][data-master]')) {
+        t.indeterminate = false;
+        document.querySelectorAll(`#sourcesContent input[type=checkbox][data-group="${t.dataset.master}"]`).forEach((cb) => { cb.checked = t.checked; });
+        saveSelection();
+      } else if (t.matches('input[type=checkbox][data-group]')) {
+        updateMaster(t.dataset.group);
+        saveSelection();
+      }
+    });
 
     // ---- 生成（前端直连 DeepSeek）----
+    function filterFeeds(feeds, selection) {
+      return {
+        x: (feeds.x || []).filter((b) => !!b.handle && selection.x.includes(b.handle)),
+        podcasts: (feeds.podcasts || []).filter((p) => !!p.name && selection.podcasts.includes(p.name)),
+        blogs: (feeds.blogs || []).filter((b) => !!b.name && selection.blogs.includes(b.name)),
+      };
+    }
+
     function formatFeedContent(feeds) {
       const parts = ['===TWEETS==='];
       for (const b of feeds.x || []) {
@@ -150,8 +225,16 @@
         $('status').textContent = '请先在上方填入你的 DeepSeek API Key 并点「保存」。';
         return;
       }
+      const selection = currentSelection();
+      if (!selection.x.length && !selection.podcasts.length && !selection.blogs.length) {
+        $('status').className = 'err';
+        $('status').textContent = '请至少选择一个信息源（在下方「信息源」里勾选）。';
+        return;
+      }
       $('go').disabled = true; $('copy').style.display = 'none'; $('result').style.display = 'none';
       $('status').className = ''; $('status').textContent = '正在抓取最新内容…';
+      const controller = new AbortController();
+      let timer = 0;
       try {
         const [fx, fp, fb] = await Promise.all([
           fetch(`${BASE}/feed-x.json`).then((r) => r.json()),
@@ -162,15 +245,18 @@
           Object.entries(PROMPT_FILES).map(async ([k, f]) => [k, await fetch(`${BASE}/prompts/${f}`).then((r) => r.text())]),
         );
         const prompts = Object.fromEntries(promptEntries);
-        const feeds = { x: fx.x || [], podcasts: fp.podcasts || [], blogs: fb.blogs || [] };
+        const allFeeds = { x: fx.x || [], podcasts: fp.podcasts || [], blogs: fb.blogs || [] };
+        const feeds = filterFeeds(allFeeds, selection);
         const dateStr = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
         const messages = buildMessages(feeds, prompts, dateStr);
 
-        $('status').textContent = '正在请 DeepSeek 生成中文摘要…（约半分钟）';
+        $('status').textContent = `正在请 DeepSeek（${GEN.model}）生成中文摘要…（最长等待 ${GEN.timeoutSec} 秒）`;
+        timer = setTimeout(() => controller.abort(), GEN.timeoutSec * 1000);
         const res = await fetch('https://api.deepseek.com/chat/completions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-          body: JSON.stringify({ model: 'deepseek-chat', messages, temperature: 0.6, max_tokens: 8000, stream: false }),
+          body: JSON.stringify({ model: GEN.model, messages, temperature: GEN.temperature, max_tokens: GEN.maxTokens, stream: false }),
+          signal: controller.signal,
         });
         if (!res.ok) {
           const errText = await res.text();
@@ -185,8 +271,13 @@
         $('status').textContent = '生成完成 · ' + new Date().toLocaleString('zh-CN');
       } catch (e) {
         $('status').className = 'err';
-        $('status').textContent = '出错了：' + e.message;
+        if (e.name === 'AbortError') {
+          $('status').textContent = `生成超时（超过 ${GEN.timeoutSec} 秒），请稍后重试。`;
+        } else {
+          $('status').textContent = '出错了：' + e.message;
+        }
       } finally {
+        if (timer) { clearTimeout(timer); }
         $('go').disabled = false;
       }
     }
